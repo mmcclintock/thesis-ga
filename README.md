@@ -1,7 +1,11 @@
 Repo for undergraduate thesis on - genetic algorithms
-=========
+
+Goals
+-----
 
 To do
 -----
 
-Find a set of good genetic algorithms that are well known to use as verification for the GAs
+Find a set of good problems that are well known and solvable using GAs. I can use these as motivation/verification for the GA code.
+
+Start thinking about the goals of this project.
