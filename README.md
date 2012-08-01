@@ -2,13 +2,11 @@ Repo for undergraduate thesis on - genetic algorithms
 
 Goals
 -----
+Use evolutionary algorithms (similar to genetic algorithms) to model ore
+deposits from magnetic/gravitational field readings.
+
+Use parallel methods to improve performance
 
 To do
 -----
-* Start thinking about the goals of this project.
-* Find a set of good problems that are well known and solvable using GAs. I can use these as motivation/verification for the GA code.
-  * Travelling salesman problem
-  * linear-quadratic problem
-  * the harvest problem
-  * the push cart problem
-  * the transportation problem
+* write proposal
