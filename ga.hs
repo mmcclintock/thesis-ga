@@ -3,11 +3,17 @@ import System.Environment ( getArgs, getProgName )
 import System.IO
 import System.Exit
 import System.Console.GetOpt
-import Text.Parsec
+import Text.Parsec hiding (State)
 import Text.Parsec.String
 import Numeric (readSigned, readFloat)
 import Control.Applicative ( (<$), empty )
 import Vectorial
+import System.Random
+import Control.Monad.State
+
+
+
+
 
 
 -- to start with all data will be stored using haskell data structures at some
@@ -64,7 +70,28 @@ volume = (4/3*pi*) . (^2) . radius
 mass :: Deposit -> Double
 mass d = (density d) * (volume d)
 
--- gravitational field of a deposit at any position outside the deposit
+-- the genetic algorithms and other evolutionary methods invole a good deal of
+-- randomness. We need a way to generate an initial random population which
+-- means we need to be able to create a random deposit. This amounts to
+-- producing random parameters for the deposit. We can use the State monad to
+-- build up stateful computations that pass the random generator around 
+-- behind the scenes.
+stRandomR :: (RandomGen g, Random a) => (a, a) -> State g a
+stRandomR r = state (randomR r)
+
+stRandom :: (RandomGen g, Random a) => State g a
+stRandom = state random
+
+randomDeposit :: State StdGen Deposit
+randomDeposit = do
+  r <- stRandomR (0.0, 10000.0)
+  x <- stRandomR (0.0, 10000.0)
+  z <- stRandomR (0.0, (-10000.0))
+  let p = 2500
+  return $ Spherical (Pos (x, z)) r p
+
+-- gravitational field of a spherical deposit at any position outside 
+-- the deposit. (we can treat the deposit as a point mass)
 grav :: Deposit -> Position -> Field
 grav dep p = fromCartesian . toCartesian $ k <*> d
   where
@@ -73,12 +100,29 @@ grav dep p = fromCartesian . toCartesian $ k <*> d
     d = (position dep) <-> p
     k = bigG * m / (mag d) ^ 3
 
--- the fitness function compares the fields at each flyover reading and
+-- the fitness function compares the field at each flyover reading and
 -- accumulates the error
-fitness :: Deposit -> Flyover -> Double
-fitness d (Flyover rs) = foldl (+) 0 $ map (error) rs
+fitness :: Flyover -> Deposit -> Double
+fitness (Flyover rs) d = foldl (+) 0 $ map (error) rs
   where error (p, f) = mag $ (grav d p) <-> f
-    
+
+
+-- evolution is a stateful computation. Each stage of evolution requires a
+-- population and some form of randomness. So a state can be thought of as a
+-- pair containing the population and a random generator
+type EvoState = ([Deposit], StdGen)
+
+
+-- at each stage of the algorithm a group of the best individuals are allowed
+-- to mutate/combine to form new individuals these operations occur acording
+-- to some probability. To handle probability we need to be able to generate a
+-- random number between 0 and 1 in our stateful evolution monad.
+random' :: State EvoState Double
+random' = do
+  (pop , gen) <- get
+  let (val, newgen) = random gen 
+  put (pop newgen)
+  return val
 
 
 
@@ -86,19 +130,25 @@ fitness d (Flyover rs) = foldl (+) 0 $ map (error) rs
 
 
 
+run :: Config -> IO ()
+run config = do
 
+  -- get a value from the global random generator
+  gen <- getStdGen
 
+  -- get the flyover data
+  fly <- flyover config
 
+  -- generate an initial evolution state (population, randgen)
+  let firstEvoState = runState (replicateM 100 randomDeposit) gen
 
+  -- create the stateful evolution computation
+  let stEvolve = state $ evolve fly
 
+  -- run evolution 1000 times
+  let (finalPop, _) = execState (replicateM 1000 stEvolve) firstEvoState
 
-
-
-
-
-
-
-
+  
 
 
 -- i will use parsec with strings to parse the data file. At some stage the
@@ -167,6 +217,11 @@ main = do
   let (actions, nonOptions, errors) = getOpt Permute options args
 
   config <- foldl (>>=) (return defaultConfig) actions
-  fly <- flyover config
 
-  putStrLn $ show fly
+  run config
+
+  putStrLn "Done!"
+
+  
+  
+
