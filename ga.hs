@@ -6,7 +6,8 @@ import System.Console.GetOpt
 import Text.Parsec
 import Text.Parsec.String
 import Numeric (readSigned, readFloat)
-import Control.Applicative
+import Control.Applicative ( (<$), empty )
+import Vectorial
 
 
 -- to start with all data will be stored using haskell data structures at some
@@ -14,32 +15,90 @@ import Control.Applicative
 -- needed (Data.Vector ..)
 
 
--- type synonim for 2d quantities with components in x,z directions
-type XZPair = (Double, Double)
+-- A position is a point in euclidean space. To start lets assume we are
+-- dealing in 2D and for simplicity use cartesian cooridnates. The x
+-- coordinate measures distance along the earth (assume flat locally) from
+-- some base station/reference point and use the z coordinate to measure
+-- distance above/below the surface. So position is a 2D vector quantity
+newtype Position = Pos { getPosComponents :: (X, Z) } deriving Show
 
-
--- A position is defined by three components in 3d eucledian space. for
--- simplicity i'll start with 2 cartesian coordinates x and z.
-newtype Pos = Pos { getPosComponents :: XZPair } deriving Show
+instance Vectorial2D Position where
+  toCartesian = getPosComponents
+  fromCartesian = Pos
 
 
 -- When the plane flys over it can measure a number of things other than its
--- position such as gravatational and magnetic fields. Whether the
+-- position such as gravitational and magnetic fields. Whether the
 -- instrumentation reads field strength (scalar field) or the complete field
 -- (vector field) is unknown. For simplicity again I'll asume the 2d case and
 -- that the plane reads two field components in x and z.
-newtype Field = Field { getFieldComponents :: XZPair } deriving Show
+newtype Field = Field { getFieldComponents :: (X, Z) } deriving Show
 
+
+instance Vectorial2D Field where
+  toCartesian = getFieldComponents
+  fromCartesian = Field
 
 -- Flyover data is vital to the algorithm. Basically it is used to calculate
 -- how good a possible solution is. In other words it's needed to evaluate the
 -- fitness function. Esentially it is list of (position, field) readings.
-newtype Flyover = Flyover { getList :: [(Pos, Field)] } deriving Show
+newtype Flyover = Flyover { getList :: [(Position, Field)] } deriving Show
 
 sampleFlyover :: Flyover
 sampleFlyover = Flyover [ (Pos (0.0, 100.0), Field (6.0, -6.0))
                         , (Pos (10.0, 100.0), Field (0.0, -10.0))
                         ]
+
+
+-- for the sake of simplicity lets assume that the ore deposit is spherical
+-- with a given radius and homogenous with a given density. The gravitational 
+-- field can be replaced by that of a point mass.
+data Deposit = Spherical { position :: Position
+                         , radius :: Double
+                         , density :: Double
+                         } deriving Show
+
+volume :: Deposit -> Double
+volume = (4/3*pi*) . (^2) . radius
+
+mass :: Deposit -> Double
+mass d = (density d) * (volume d)
+
+-- gravitational field of a deposit at any position outside the deposit
+grav :: Deposit -> Position -> Field
+grav dep p = fromCartesian . toCartesian $ k <*> d
+  where
+    bigG = 6.673e-11
+    m = mass dep
+    d = (position dep) <-> p
+    k = bigG * m / (mag d) ^ 3
+
+-- the fitness function compares the fields at each flyover reading and
+-- accumulates the error
+fitness :: Deposit -> Flyover -> Double
+fitness d (Flyover rs) = foldl (+) 0 $ map (error) rs
+  where error (p, f) = mag $ (grav d p) <-> f
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 -- i will use parsec with strings to parse the data file. At some stage the
