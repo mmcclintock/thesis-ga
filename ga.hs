@@ -10,6 +10,7 @@ import Control.Applicative ( (<$), empty )
 import Vectorial
 import System.Random
 import Control.Monad.State
+import Data.Maybe (isJust)
 
 
 
@@ -109,20 +110,70 @@ fitness (Flyover rs) d = foldl (+) 0 $ map (error) rs
 
 -- evolution is a stateful computation. Each stage of evolution requires a
 -- population and some form of randomness. So a state can be thought of as a
--- pair containing the population and a random generator
+-- pair containing the population and a random generator. Lets also define a
+-- function that lifts a stateful random computation to a stateful evolution
+-- computation. This allows us to generate random numbers in the evolution
+-- state monad.
 type EvoState = ([Deposit], StdGen)
 
-
--- at each stage of the algorithm a group of the best individuals are allowed
--- to mutate/combine to form new individuals these operations occur acording
--- to some probability. To handle probability we need to be able to generate a
--- random number between 0 and 1 in our stateful evolution monad.
-random' :: State EvoState Double
-random' = do
-  (pop , gen) <- get
-  let (val, newgen) = random gen 
-  put (pop newgen)
+liftEvo :: State StdGen a -> State EvoState a
+liftEvo r =  do
+  (pop, gen) <- get
+  let (val, newgen) = runState r gen
+  put (pop, newgen)  -- population is unaffected
   return val
+
+-- an important stateful evolution operation is the need to order the
+-- population on merit (via the fitness function).
+{-order :: State EvoState ()-}
+{-order = do-}
+  {-(pop, gen) <- get-}
+  {-put (sort pop, gen)-}
+  {-return ()-}
+
+random' :: State EvoState Double
+random' = liftEvo (state random)
+
+-- during the evolution provess there comes a stage where the best individuals
+-- have the chance to produce offspring. Characteristics of the  offspring are 
+-- chosen in an random maner. If we consider various types of
+-- mutation/combinations where each is a stateful evolution computation that
+-- takes individuals from the population and returns the resulting individuals 
+-- of the mutation then we can continue building up the new populution until
+-- the population in the current state is empty. Then we can set the new
+-- population as the new state and start all over.
+--
+-- one problem is how to decide which mutation/combination to apply. This
+-- happens at random and should be governed by probabilites given in the
+-- config. In terms of implementation we will handle it using a proability
+-- decision tree where each node stores the probability weight of being chosen and
+-- each leaf store the probability and a value (in our case a sateful
+-- evolution computation)
+
+type Weight = Double
+data ProbTree a = Node [(Weight, ProbTree a)] 
+                  | Leaf a 
+                  deriving (Show)
+
+chose :: [(Weight, a)] -> State StdGen a
+chose xs = do
+  let total = sum $ map fst xs
+      cumsum = scanl1 (\(acc,_) (w, tree) -> (acc + w, tree)) xs
+  r <- (state $ randomR (0.0, total))
+  return . snd . head $ dropWhile (\(acc,_) -> acc < r) cumsum
+
+traverse :: ProbTree a -> State StdGen a
+traverse (Leaf val) = return val
+traverse (Node xs) = do
+  res <- chose xs
+  traverse res
+
+-- So one must construct a ProbTree (State EvoState [Deposit]) complete with
+-- branch probabilities/weights. Each leaf holds a mutation/combination
+-- stateful computation.
+
+
+
 
 
 
@@ -142,11 +193,13 @@ run config = do
   -- generate an initial evolution state (population, randgen)
   let firstEvoState = runState (replicateM 100 randomDeposit) gen
 
+
   -- create the stateful evolution computation
-  let stEvolve = state $ evolve fly
+  --let stEvolve = state $ evolve fly
 
   -- run evolution 1000 times
-  let (finalPop, _) = execState (replicateM 1000 stEvolve) firstEvoState
+  --let (finalPop, _) = execState (replicateM 1000 stEvolve) firstEvoState
+  putStrLn "Run Complete!"
 
   
 
@@ -175,6 +228,7 @@ parseFloat = do
   case readSigned readFloat s of
     [(n,s')]  -> n <$ setInput s'
     _         -> empty
+
 
 
 -- This program will except parameters such as an input data file on the 
