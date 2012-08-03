@@ -11,6 +11,7 @@ import Vectorial
 import System.Random
 import Control.Monad.State
 import Data.Maybe (isJust)
+import Data.List (sortBy)
 
 
 
@@ -125,14 +126,25 @@ liftEvo r =  do
 
 -- an important stateful evolution operation is the need to order the
 -- population on merit (via the fitness function).
-{-order :: State EvoState ()-}
-{-order = do-}
-  {-(pop, gen) <- get-}
-  {-put (sort pop, gen)-}
-  {-return ()-}
+order :: Flyover -> State EvoState ()
+order fly = do
+  (pop, gen) <- get
+  put (sortBy pred pop, gen)
+  return ()
+    where f = fitness fly
+          pred d1 d2 = (f d1) `compare` (f d2)
+
+takeBest :: Int -> State EvoState ()
+takeBest n = do
+  (pop, gen) <- get
+  put (take n pop, gen)
+  return ()
 
 random' :: State EvoState Double
 random' = liftEvo (state random)
+
+randomR' :: (Double, Double) -> State EvoState Double
+randomR' r = liftEvo (state $ randomR r)
 
 -- during the evolution provess there comes a stage where the best individuals
 -- have the chance to produce offspring. Characteristics of the  offspring are 
@@ -172,14 +184,56 @@ traverse (Node xs) = do
 -- branch probabilities/weights. Each leaf holds a mutation/combination
 -- stateful computation.
 
+shift :: State EvoState [Deposit]
+shift = do
+  dx <- randomR' (-100.0, 100.0)
+  dz <- randomR' (-100.0, 100.0)
+  (d:pop, gen) <- get
+  let nd = Spherical { position = (position d) <+> (Pos (dx, dz)) 
+                     , radius = radius d
+                     , density = density d
+                     }
+  put (pop, gen)
+  return [nd, d]
+
+scale :: State EvoState [Deposit]
+scale = do
+  dr <- randomR' (0.0, 10.0)
+  (d:pop, gen) <- get
+  let nd = Spherical { position = position d
+                     , radius = dr * (radius d)
+                     , density = density d
+                     }
+  put (pop, gen)
+  return [nd, d]
+
+pass :: State EvoState [Deposit]
+pass = do 
+  (d:pop, gen) <- get
+  put (pop, gen)
+  return [d]
 
 
+evolve :: ProbTree (State EvoState [Deposit]) -> State EvoState ()
+evolve ptree = reproduce []
+  where
+    reproduce :: [[Deposit]] ->  State EvoState ()
+    reproduce xs = do
+      (pop, gen) <- get
+      if null pop
+        then do
+          put (concat xs, gen)
+        else do
+          op <- (liftEvo $ traverse ptree)
+          res <- op
+          reproduce (res:xs)
 
-
-
-
-
-
+  
+alg :: Flyover -> ProbTree (State EvoState [Deposit]) -> State EvoState ()
+alg fly ptree = do
+  order fly
+  takeBest 100
+  evolve ptree
 
 run :: Config -> IO ()
 run config = do
@@ -190,20 +244,23 @@ run config = do
   -- get the flyover data
   fly <- flyover config
 
+  -- configure the probtree
+  let ptree = Node [(0.2, Leaf shift), (0.2, Leaf scale), (0.6, Leaf pass)]
+
   -- generate an initial evolution state (population, randgen)
   let firstEvoState = runState (replicateM 100 randomDeposit) gen
 
 
-  -- create the stateful evolution computation
-  --let stEvolve = state $ evolve fly
+  -- run evolution 100 times
+  let finalState = execState (replicateM 100 (alg fly ptree)) firstEvoState
 
-  -- run evolution 1000 times
-  --let (finalPop, _) = execState (replicateM 1000 stEvolve) firstEvoState
-  putStrLn "Run Complete!"
+  let (finalPop, _) = execState (order fly) finalState
 
   
+  putStrLn "Run Complete!"
 
-
+  putStrLn $ show (head finalPop)
+  
 -- i will use parsec with strings to parse the data file. At some stage the
 -- real data file may become large and this method may need updating.
 parseFlyover :: FilePath -> IO Flyover
@@ -228,6 +285,7 @@ parseFloat = do
   case readSigned readFloat s of
     [(n,s')]  -> n <$ setInput s'
     _         -> empty
+
 
 
 
