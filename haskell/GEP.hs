@@ -1,21 +1,26 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Unsafe as BSU
 import qualified Data.ByteString as BS
-import Data.Word ( Word8 )
-import Data.Char (intToDigit)
+import qualified Data.ByteString.Char8 as BSC
+import Data.ByteString (ByteString, pack)
 
 import qualified Data.Vector.Unboxed as V
+import Data.Vector.Unboxed (Vector)
+
+import Data.Monoid
+import Control.Monad
+import Control.Monad.Reader
+import Control.Monad.Random
+import Control.Applicative ( pure, (<$>) )
+
+import Data.Word ( Word8 )
+import Data.Char (intToDigit)
 import qualified Data.Map as M
 
 import qualified Data.Attoparsec.ByteString.Char8 as A
 import Data.Attoparsec.ByteString.Char8 ( Parser, Result )
 
-import Control.Monad
-import Control.Monad.Random
-import Control.Applicative ( pure, (<$>) )
-import Data.Monoid
 
 
 -- This module implements the GEP-RNC algorithm as detailed in the
@@ -54,8 +59,11 @@ import Data.Monoid
 -- In haskell lets use strict bytestrings for the symbols and unboxed
 -- vectors for the RNCs
 
-type RNCs = V.Vector Double
-data Gene = Gene BSC.ByteString RNCs deriving Show
+type RNCs = Vector Double
+type Symbols = ByteString
+type Alphabet = Symbols
+
+data Gene = Gene Symbols RNCs deriving Show
 
 -- Multigenic systems are useful for optimization problems where each
 -- gene represents a parameter of the problem. The collection of all
@@ -88,100 +96,106 @@ instance Monoid Gene where
 -- before the algorithm starts so it can be stored along with all the
 -- other algorithm parameters. 
 
-
-
-
-
-
-
-
-
-
-
--- information to interpret gene/chromosome
-data Genome = Genome { maxArity :: Int
-                     , headSize :: Int
-                     , terminalSet :: BSC.ByteString
-                     , functionSet :: BSC.ByteString
-                     , numberRNC :: Int
-                     , rangeRNC :: (Double, Double)
+data Config = Config { headLength  :: Int
+                     , operators   :: Symbols
+                     , terminals   :: Symbols
+                     , dcAlphabet  :: Alphabet  -- sets n
+                     , rangeRNC    :: (Double, Double)
                      , numberGenes :: Int
                      } deriving Show
 
-tailSize :: Genome -> Int
-tailSize g = (headSize g) * ((maxArity g) - 1)  + 1
+tailLength c   = (headLength c) + 1
+dcLength       = tailLength
+geneLength c   = (headLength c) + 2 * (tailLength c)
+nRandoms       = BS.length . dcAlphabet
+headAlphabet c = BS.append (terminals c) (operators c)
+tailAlphabet   = terminals
 
-geneSize :: Genome -> Int
-geneSize g = (headSize g) + (tailSize g)
+-- example config
+conf = Config 15 "+-" "?" "01234" (-100.0,100.0) 2
 
-symbolSet :: Genome -> SymbolSet
-symbolSet g = BS.append (terminalSet g) (functionSet g)
+-- because binary functions have different types to unary and ternary
+-- operators its hard to define a mapping of operator symbol to
+-- functions. For simplicity lets just support binary operators (+-*/)
+-- this means maxArity = 2. Secondly passing the config as the first
+-- parameter to every function is annoying. This can be fixed by using
+-- the reader monad.
 
+-- Obviously the GEP algorithm relies on the ability to produce random
+-- numbers. To handle this in haskell we must pass around a random
+-- generator but we can hide this in a state monad. 
 
--- example genome decleration
-ge = Genome 2 15 "?" "+-*/" 5 (-100.0,100.0) 2
+type StdRand = Rand StdGen
 
-randomSymbol :: SymbolSet -> Rand StdGen Word8
+-- to initialize the population the genotype needs to be filled with
+-- random symbols. This random computation returns a random symbol
+-- from a given alphabet,
+randomSymbol :: Alphabet -> StdRand Word8
 randomSymbol s = do
   i <- getRandomR (0, (BS.length s) - 1)
   return (BSU.unsafeIndex s i)
 
-randomInteger :: (Int, Int) -> Rand StdGen Char
-randomInteger r = do
-  i <- getRandomR r
-  return (intToDigit i)
+-- to generate a random gene we need to use the config (handled by
+-- Reader monad) and pass around the random generator (handled by
+-- StdRand monad). We can use the Reader monad transformer to stack
+-- the monads.
 
--- generate random gene from genome
-randomGene :: Genome -> Rand StdGen Gene
-randomGene g = do
-    head <- replicateM hl (randomSymbol ss)
-    tail <- replicateM tl (randomSymbol ts)
-    rts <- replicateM nr (randomInteger (0, nr))
-    rncs <- replicateM nr (getRandomR rr)
-    let bs = BS.concat [(BS.pack head), (BS.pack tail), (BSC.pack rts)]
-    let rnv = V.fromList rncs
-    return $ Gene bs rnv
-  where 
-    hl = headSize g
-    tl = tailSize g
-    ss = symbolSet g
-    ts = terminalSet g
-    nr = numberRNC g
-    rr = rangeRNC g
+randomGene :: ReaderT Config StdRand Gene
+randomGene = do
+  -- head domain
+  hl <- asks (headLength)
+  ha <- asks (headAlphabet)
+  head <- lift $ pack <$> replicateM hl (randomSymbol ha)
 
--- generate random chromosome from genome
-randomChromosome :: Genome -> Rand StdGen Chromosome
-randomChromosome g = do
-    gs <- replicateM (numberGenes g) (randomGene g)
+  -- tail domain
+  tl <- asks (tailLength)
+  ta <- asks (tailAlphabet)
+  tail <- lift $ pack <$> replicateM tl (randomSymbol ta)
+
+  -- Dc domain
+  dcl <- asks (dcLength)
+  dca <- asks (dcAlphabet)
+  dc <- lift $ pack <$> replicateM dcl (randomSymbol dca)
+
+  -- RNC's
+  nr <- asks (nRandoms)
+  rr <- asks (rangeRNC)
+  rncs <- lift $ V.fromList <$> replicateM nr (getRandomR rr)
+
+  return $ Gene (BS.concat [head, tail, dc]) rncs
+
+-- generate random chromosome from config. Because genes are are
+-- monoids to make a random chromosome we can just make multiple genes
+-- and then concat them.
+randomChromosome :: ReaderT Config StdRand Chromosome
+randomChromosome = do
+    ng <- asks (numberGenes)
+    gs <- replicateM ng randomGene
     return $ mconcat gs
 
 
-termChar = A.char '?'
-opChar = A.satisfy (A.inClass "+-*/")
+{-termChar = A.char '?'-}
+{-opChar = A.satisfy (A.inClass "+-*/")-}
 
+{-buildList :: Parser [[Char]]-}
+{-buildList = init >>= build-}
+  {-where-}
+    {-init = (\x -> [[x]]) <$> A.anyChar-}
 
-buildList :: Parser [[Char]]
-buildList = init >>= build
-  where
-    init = (\x -> [[x]]) <$> A.anyChar
+{-build :: [[Char]] -> Parser [[Char]]-}
+{-build xs = if n > 0 -}
+           {-then ((:xs) <$> (A.count n A.anyChar)) >>= build-}
+           {-else pure xs-}
+  {-where -}
+    {-value '+' = 2-}
+    {-value '-' = 2-}
+    {-value '*' = 2-}
+    {-value '/' = 2-}
+    {-value '?' = 0-}
+    {-n = sum $ map value (head xs)-}
 
-
-build :: [[Char]] -> Parser [[Char]]
-build xs = if n > 0 
-           then ((:xs) <$> (A.count n A.anyChar)) >>= build
-           else pure xs
-  where 
-    value '+' = 2
-    value '-' = 2
-    value '*' = 2
-    value '/' = 2
-    value '?' = 0
-    n = sum $ map value (head xs)
-
-
-unsafeGetDone :: Result [[Char]] -> [[Char]]
-unsafeGetDone (A.Done _ r) = reverse r
-
+{-unsafeGetDone :: Result [[Char]] -> [[Char]]-}
+{-unsafeGetDone (A.Done _ r) = reverse r-}
 
 main = do
   putStrLn "Done!"
