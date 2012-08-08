@@ -5,13 +5,14 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import Data.ByteString (ByteString, pack)
 
-import qualified Data.Vector.Unboxed as V
-import Data.Vector.Unboxed (Vector)
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector as B
 
 import Data.Monoid
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Random
+import Control.Monad.State
 import Control.Applicative ( pure, (<$>) )
 
 import Data.Word ( Word8 )
@@ -59,7 +60,9 @@ import Data.Attoparsec.ByteString.Char8 ( Parser, Result )
 -- In haskell lets use strict bytestrings for the symbols and unboxed
 -- vectors for the RNCs
 
-type RNCs = Vector Double
+type Vector = B.Vector
+type UVector = U.Vector
+type RNCs = UVector Double
 type Symbols = ByteString
 type Alphabet = Symbols
 
@@ -80,12 +83,12 @@ data Gene = Gene Symbols RNCs deriving Show
 -- interchangeable. The idea of chromosome as a large gene formed by
 -- joining smaller genes points to a monoid.
 
-type Chromosome = Gene
-
 instance Monoid Gene where
-  mempty = Gene BSC.empty V.empty
+  mempty = Gene BSC.empty U.empty
   mappend (Gene b1 v1) (Gene b2 v2) = 
-    Gene (BS.append b1 b2) (v1 V.++ v2)
+    Gene (BS.append b1 b2) (v1 U.++ v2)
+
+newtype Chromosome = Chrome { fromGene :: Gene } deriving Show
 
 -- While efficient to represent chromosomes by two single structures
 -- (a bytestring and a vector) especially for operations like
@@ -96,6 +99,11 @@ instance Monoid Gene where
 -- before the algorithm starts so it can be stored along with all the
 -- other algorithm parameters. 
 
+-- because binary functions have different types to unary and ternary
+-- operators its hard to define a mapping of operator symbol to
+-- functions. For simplicity lets just support binary operators (+-*/)
+-- this means maxArity = 2. 
+--
 data Config = Config { headLength  :: Int
                      , operators   :: Symbols
                      , terminals   :: Symbols
@@ -114,23 +122,36 @@ tailAlphabet   = terminals
 -- example config
 conf = Config 15 "+-" "?" "01234" (-100.0,100.0) 2
 
--- because binary functions have different types to unary and ternary
--- operators its hard to define a mapping of operator symbol to
--- functions. For simplicity lets just support binary operators (+-*/)
--- this means maxArity = 2. Secondly passing the config as the first
--- parameter to every function is annoying. This can be fixed by using
--- the reader monad.
-
 -- Obviously the GEP algorithm relies on the ability to produce random
 -- numbers. To handle this in haskell we must pass around a random
 -- generator but we can hide this in a state monad. 
 
-type StdRand = Rand StdGen
+type Ran = Rand StdGen
+
+-- Throughout the GEP-Algorithm a record of the current population
+-- must be kept at all times (we can used a boxed vector). Also the
+-- next population is constructed from the last. This is an example of
+-- a stateful computation where a state monad is useful. However we
+-- will often want use the stateful population monad alongside other
+-- monads like the Random monad. So we should also define a monad
+-- transformer.
+
+type Population = Vector Chromosome
+type Pop = State Population
+type PopT = StateT Population
+
+-- passing the config as the first parameter to every function is
+-- annoying. This can be fixed by using the reader monad. The reader
+-- monad is often used in combination with the Ran Monad and the
+-- Pop monad so again we will define a transformer.
+
+type CRead = Reader Config
+type CReadT = ReaderT Config
 
 -- to initialize the population the genotype needs to be filled with
 -- random symbols. This random computation returns a random symbol
 -- from a given alphabet,
-randomSymbol :: Alphabet -> StdRand Word8
+randomSymbol :: Alphabet -> Ran Word8
 randomSymbol s = do
   i <- getRandomR (0, (BS.length s) - 1)
   return (BSU.unsafeIndex s i)
@@ -140,7 +161,7 @@ randomSymbol s = do
 -- StdRand monad). We can use the Reader monad transformer to stack
 -- the monads.
 
-randomGene :: ReaderT Config StdRand Gene
+randomGene :: CReadT Ran Gene
 randomGene = do
   -- head domain
   hl <- asks (headLength)
@@ -160,19 +181,32 @@ randomGene = do
   -- RNC's
   nr <- asks (nRandoms)
   rr <- asks (rangeRNC)
-  rncs <- lift $ V.fromList <$> replicateM nr (getRandomR rr)
+  rncs <- lift $ U.fromList <$> replicateM nr (getRandomR rr)
 
   return $ Gene (BS.concat [head, tail, dc]) rncs
 
 -- generate random chromosome from config. Because genes are are
 -- monoids to make a random chromosome we can just make multiple genes
 -- and then concat them.
-randomChromosome :: ReaderT Config StdRand Chromosome
+randomChromosome :: CReadT Ran Chromosome
 randomChromosome = do
     ng <- asks (numberGenes)
     gs <- replicateM ng randomGene
-    return $ mconcat gs
+    return $ Chrome $ mconcat gs
 
+-- selection is a critical part of GEP and together with replication
+-- sets the stage for evolution. selection works like a roulette wheel
+-- where the fitter chromosomes have greater change of being chosen.
+-- The roulette wheel is spun N number of times where N is the number
+-- of chromosomes in the population. Once chosen the chromosome is
+-- replicated this is trivial in haskell.
+
+
+-- fitness :: CReadT Pop (UVector Double)
+
+-- selection :: UVector Double -> CReadT PopT Rand Population
+
+-- evolve :: Population -> CReadT PopT Rand ()
 
 {-termChar = A.char '?'-}
 {-opChar = A.satisfy (A.inClass "+-*/")-}
