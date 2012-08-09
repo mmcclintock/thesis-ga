@@ -16,12 +16,10 @@ import Control.Monad.State
 import Control.Applicative ( pure, (<$>) )
 
 import Data.Word ( Word8 )
-import Data.Char (intToDigit)
+import Data.Char (digitToInt)
 import qualified Data.Map as M
-
-import qualified Data.Attoparsec.ByteString.Char8 as A
-import Data.Attoparsec.ByteString.Char8 ( Parser, Result )
-
+import Data.Map ( Map )
+import Data.Tree
 
 
 -- This module implements the GEP-RNC algorithm as detailed in the
@@ -120,7 +118,7 @@ headAlphabet c = BS.append (terminals c) (operators c)
 tailAlphabet   = terminals
 
 -- example config
-conf = Config 15 "+-" "?" "01234" (-100.0,100.0) 2
+conf = Config 4 "+-" "?" "01234" (-100.0,100.0) 2
 
 -- Obviously the GEP algorithm relies on the ability to produce random
 -- numbers. To handle this in haskell we must pass around a random
@@ -194,42 +192,119 @@ randomChromosome = do
     gs <- replicateM ng randomGene
     return $ Chrome $ mconcat gs
 
--- selection is a critical part of GEP and together with replication
--- sets the stage for evolution. selection works like a roulette wheel
--- where the fitter chromosomes have greater change of being chosen.
--- The roulette wheel is spun N number of times where N is the number
--- of chromosomes in the population. Once chosen the chromosome is
--- replicated this is trivial in haskell.
 
+
+-- in GEP-RNC each gene represents a valid program. often these
+-- programs evaluate to floating point numbers used, for example as
+-- parameters of a model to be optimized. The fitness also relies on
+-- the programs output. 
+--
+-- Now i had a lot of trouble trying to find a solution that parses
+-- the gene bytestream to a tree structure and then evaluates the tree
+-- using a recursive definition. My first attempt was to use
+-- parsec/attoparsec but thanks to the people at stackoverflow.com who
+-- set me in ther right direction. See here
+-- http://stackoverflow.com/questions/11869206/parsing-karva-notation-in-haskell
+--
+-- The heart of the problem is tree unfolding BREADTH-FIRST!!!
+-- thankfully the Data.Tree exports a function for doing this.  we
+-- will handle the parsing with attoparsec. for now we will hardcode
+-- the operators "+-*/", the function "?" and the Dc-alphabet as
+-- "0123456789" into the parsing code. Note this is a hack just to get
+-- something working and is by no means a good solution. 
+
+
+data Instruction = UnaryOp (Double -> Double) |
+                   BinaryOp (Double -> Double -> Double) |
+                   Value Double
+
+type Node = Instruction
+
+
+instructs :: Map Char Instruction
+instructs = M.fromList
+  [('+', BinaryOp (+))
+  ,('-', BinaryOp (-))
+  ,('*', BinaryOp (*))
+  ,('/', BinaryOp (/))
+  ]
+
+
+type PartialGene = (ByteString, ByteString, UVector Double)
+  
+
+randomOp :: State PartialGene Node
+randomOp = do
+  (ss, rs, rncs) <- get
+  let i = digitToInt $ BSC.head rs
+  put (ss, BS.tail rs, rncs)
+  return $ Value (rncs U.! i)
+
+getOp :: Char -> State PartialGene Node
+getOp '?' = randomOp
+getOp c = return (instructs M.! c)
+
+
+step :: Node -> State PartialGene (Node, [Node])
+step node = do
+    (ss, rs, rncs) <- get
+    let (args, rem) = case node of
+                        (BinaryOp _) -> BS.splitAt 2 ss
+                        (UnaryOp _) -> BS.splitAt 1 ss
+                        _ -> (BS.empty, ss)
+    put (rem, rs, rncs)
+    children <- sequence $ map getOp (BSC.unpack args)
+    return (node, children)
+
+treeify :: State PartialGene (Tree Node)
+treeify = do
+  (ss, rs, rncs) <- get
+  if BS.null ss
+    then fail "empty list"
+    else do
+      put (BS.tail ss, rs, rncs)
+      root <- getOp (BSC.head ss)
+      unfoldTreeM_BF step root
+
+splitGene :: Gene -> CRead PartialGene
+splitGene (Gene bs rncs) = do
+  hl <- asks (headLength)
+  tl <- asks (tailLength)
+  let (ss, rs) = BS.splitAt (hl + tl) bs
+  return (ss, rs, rncs)
+
+execute :: Gene -> CRead Double
+execute g = do
+  pg <- splitGene g
+  return (evalTree $ evalState treeify pg)
+
+evalTree :: Tree Node -> Double
+evalTree (Node (Value v) _) = v
+evalTree (Node (UnaryOp u) [t]) = u (evalTree t)
+evalTree (Node (BinaryOp b) (lt:rt:[])) = b (evalTree lt) (evalTree rt)
+
+-- the fitness of individuals drives evolution. for now lets assume
+-- fitness is a number between 0 and 1000. 0 represents an unviable
+-- solution while 1000 represents a perfect solution.
+
+
+-- fitness :: Chromosome -> Double
+
+-- selection is a critical part of GEP and together with replication
+-- sets the stage for evolution. replication is trivial (especially in
+-- haskell) and amounts to producing an exact copy of a chromosome.
+-- selection is roulette based where each chromosome has a place on
+-- the roulette who's size is proportional to its fitness. That way
+-- individuals with greater fitness have better odds of being
+-- replicated. The roulette wheel is spun N times to ensure the
+-- population size remains constant.
+
+
+{-selection :: PopT Rand Population-}
+{-selection = -}
 
 -- fitness :: CReadT Pop (UVector Double)
-
--- selection :: UVector Double -> CReadT PopT Rand Population
-
 -- evolve :: Population -> CReadT PopT Rand ()
-
-{-termChar = A.char '?'-}
-{-opChar = A.satisfy (A.inClass "+-*/")-}
-
-{-buildList :: Parser [[Char]]-}
-{-buildList = init >>= build-}
-  {-where-}
-    {-init = (\x -> [[x]]) <$> A.anyChar-}
-
-{-build :: [[Char]] -> Parser [[Char]]-}
-{-build xs = if n > 0 -}
-           {-then ((:xs) <$> (A.count n A.anyChar)) >>= build-}
-           {-else pure xs-}
-  {-where -}
-    {-value '+' = 2-}
-    {-value '-' = 2-}
-    {-value '*' = 2-}
-    {-value '/' = 2-}
-    {-value '?' = 0-}
-    {-n = sum $ map value (head xs)-}
-
-{-unsafeGetDone :: Result [[Char]] -> [[Char]]-}
-{-unsafeGetDone (A.Done _ r) = reverse r-}
 
 main = do
   putStrLn "Done!"
