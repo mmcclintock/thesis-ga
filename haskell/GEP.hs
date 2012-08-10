@@ -7,6 +7,7 @@ import Data.ByteString (ByteString, pack)
 
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector as B
+import Data.Vector.Algorithms.Intro ( partialSortBy )
 
 import Data.Monoid
 import Control.Monad
@@ -23,7 +24,9 @@ import Data.Tree
 
 
 -- This module implements the GEP-RNC algorithm as detailed in the
--- book by Cândida Ferreira, Gene Expression Programming.
+-- book by Cândida Ferreira, Gene Expression Programming. The main
+-- focus is GEP-PO which is gene expression programming for parameter
+-- optimisation.
 
 -- In GEP-RNC There are 3 domains per gene: the head, the tail and the
 -- Dc domain. 
@@ -61,6 +64,8 @@ import Data.Tree
 type Vector = B.Vector
 type UVector = U.Vector
 type RNCs = UVector Double
+type Params = UVector Double -- the parameters the genes encode
+type Fitness = Double -- fitness is a number from 0 to 1000
 type Symbols = ByteString
 type Alphabet = Symbols
 
@@ -97,32 +102,30 @@ newtype Chromosome = Chrome { toGene :: Gene } deriving Show
 -- before the algorithm starts so it can be stored along with all the
 -- other algorithm parameters. 
 
--- because binary functions have different types to unary and ternary
--- operators its hard to define a mapping of operator symbol to
--- functions. For simplicity lets just support binary operators (+-*/)
--- this means maxArity = 2. 
---
 data Config = Config { headLength  :: Int
                      , operators   :: Symbols
                      , terminals   :: Symbols
                      , dcAlphabet  :: Alphabet  -- sets n
                      , rangeRNC    :: (Double, Double)
                      , numberGenes :: Int
-                     } deriving Show
+                     , fitnessFunc :: Params -> Fitness
+                     , popSize     :: Int
+                     , mutationRate :: Double
+                     }
 
-tailLength c   = headLength c + 1
+tailLength c   = headLength c * (maxArity - 1) + 1
 dcLength       = tailLength
 geneLength c   = headLength c + 2 * tailLength c
 nRandoms       = BS.length . dcAlphabet
 headAlphabet c = BS.append (terminals c) (operators c)
 tailAlphabet   = terminals
 
-
 -- Obviously the GEP algorithm relies on the ability to produce random
 -- numbers. To handle this in haskell we must pass around a random
 -- generator but we can hide this in a state monad. 
 
 type Ran = Rand StdGen
+type RanT = RandT StdGen
 
 -- passing the config as the first parameter to every function is
 -- annoying. This can be fixed by using the reader monad. The reader
@@ -135,10 +138,10 @@ type CReadT = ReaderT Config
 -- to initialize the population the genotype needs to be filled with
 -- random symbols. This random computation returns a random symbol
 -- from a given alphabet,
-randomSymbol :: Alphabet -> Ran Word8
+randomSymbol :: MonadRandom m => Alphabet -> m Char
 randomSymbol s = do
   i <- getRandomR (0, BS.length s - 1)
-  return (BSU.unsafeIndex s i)
+  return (BSC.index s i)
 
 -- to generate a random gene we need to use the config (handled by
 -- Reader monad) and pass around the random generator (handled by
@@ -150,22 +153,22 @@ randomGene = do
   -- head domain
   hl <- asks headLength
   ha <- asks headAlphabet
-  h <- lift $ pack <$> replicateM hl (randomSymbol ha)
+  h <- BSC.pack <$> replicateM hl (randomSymbol ha)
 
   -- tail domain
   tl <- asks tailLength
   ta <- asks tailAlphabet
-  t <- lift $ pack <$> replicateM tl (randomSymbol ta)
+  t <- BSC.pack <$> replicateM tl (randomSymbol ta)
 
   -- Dc domain
   dcl <- asks dcLength
   dca <- asks dcAlphabet
-  dc <- lift $ pack <$> replicateM dcl (randomSymbol dca)
+  dc <- BSC.pack <$> replicateM dcl (randomSymbol dca)
 
   -- RNC's
   nr <- asks nRandoms
   rr <- asks rangeRNC
-  rncs <- lift $ U.fromList <$> replicateM nr (getRandomR rr)
+  rncs <- U.fromList <$> replicateM nr (getRandomR rr)
 
   return $ Gene (BS.concat [h, t, dc]) rncs
 
@@ -204,6 +207,9 @@ randomChromosome = do
 data Instruction = UnaryOp (Double -> Double) |
                    BinaryOp (Double -> Double -> Double) |
                    Value Double
+
+maxArity :: Int
+maxArity = 2 -- this is clear from the data type above
 
 type Node = Instruction
 
@@ -252,7 +258,7 @@ treeify = do
       root <- getOp (BSC.head ss)
       unfoldTreeM_BF step root
 
-splitGene :: Gene -> CRead PartialGene
+splitGene :: Gene -> Stack PartialGene
 splitGene (Gene bs rncs) = do
   hl <- asks headLength
   tl <- asks tailLength
@@ -273,7 +279,7 @@ partUVector v l
   | otherwise = let (s, rest) = U.splitAt l v
                 in s:partUVector rest l
 
-splitChromosome :: Chromosome -> CRead (Vector Gene)
+splitChromosome :: Chromosome -> Stack (Vector Gene)
 splitChromosome (Chrome (Gene ss rncs)) = do
     gl <- asks geneLength
     rs <- asks nRandoms
@@ -287,16 +293,15 @@ evalTree (Node (UnaryOp u) [t]) = u (evalTree t)
 evalTree (Node (BinaryOp b) (lt:rt:[])) = b (evalTree lt) (evalTree rt)
 evalTree _ = error "something went wrong"
 
-executeGene :: Gene -> CRead Double
+executeGene :: Gene -> Stack Double
 executeGene g = do
   pg <- splitGene g
   return (evalTree $ evalState treeify pg)
 
 -- for optimization problems their is no need to link the genes with
 -- operators. Each gene represents a parameter of the solution
-type Params = UVector Double
 
-executeChromosome :: Chromosome -> CRead Params
+executeChromosome :: Chromosome -> Stack Params
 executeChromosome c = do
   genes <- splitChromosome c
   B.convert <$> B.mapM executeGene genes
@@ -304,23 +309,8 @@ executeChromosome c = do
 -- the fitness of individuals drives evolution. for now lets assume
 -- fitness is a number between 0 and 1000. 0 represents an unviable
 -- solution while 1000 represents a perfect solution. The fitenss
--- function is obviously problem specific so we can't provide
--- definition here but we can define a class
-
-type Fitness = Double
-
-class GeneticModel a where
-
-  -- construct a model
-  mkModel :: Params -> a
-
-  -- takes UVector of parameters and returns the fitneass
-  fitness :: a -> Fitness
-
--- for testing, an example model is a straight line with 2 parameters,
--- the enviroment is data coordinates. we can provide a fitness
--- function related to the mean squared error and GEP-PO will perform
--- linear regression.
+-- function is obviously problem specific and it is given in the
+-- config.
 
 xvals = (U.fromList [1.0, 2.0, 3.0])
 yvals = (U.fromList [1.0, 2.0, 3.0])
@@ -328,24 +318,27 @@ yvals = (U.fromList [1.0, 2.0, 3.0])
 
 -- need two genes
 lineConf :: Config
-lineConf = Config 10 "+-*" "?" "01234" (-100.0,100.0) 2
+lineConf = Config 
+  { headLength  = 10
+  , operators   = "+-"
+  , terminals   = "?"
+  , dcAlphabet  = "01234"
+  , rangeRNC    = (-10.0, 10.0)
+  , numberGenes = 2
+  , fitnessFunc = fit
+  , popSize     = 10
+  , mutationRate = 0.4
+  }
 
-newtype Line = Line { toDoubs :: (Double, Double) }
-
-instance GeneticModel Line where
-
-  mkModel ps = Line (m,c)
-    where 
-      m = U.unsafeHead ps
-      c = U.unsafeIndex ps 1
-
-  fitness (Line (m, c)) = 1000.0 / (1 + mse)
-    where 
-      ys = U.map (\x -> m*x + c) xvals
-      mse = U.sum . U.map (^2) $ U.zipWith (-) ys yvals
+fit :: Params -> Fitness
+fit ps = 1000.0 / (1 + mse)
+  where 
+    m = U.unsafeHead ps
+    c = U.unsafeIndex ps 1
+    ys = U.map (\x -> m*x + c) xvals
+    mse = U.sum . U.map (^2) $ U.zipWith (-) ys yvals
 
 -- GEP is now set and ready to do linear regression
-
 
 -- so far we have dealt with: gene and chromosome representation,
 -- configuration, creation random genes/chromosomes, gene/chromosome
@@ -364,6 +357,26 @@ instance GeneticModel Line where
 type Population = Vector Chromosome
 type Pop = State Population
 type PopT = StateT Population
+type Stack = PopT (CReadT Ran)
+
+
+run :: Stack a -> Config -> StdGen -> a
+run m c = evalRand (runReaderT (evalStateT m B.empty) c)
+
+-- generate a random population
+randomPop :: Stack ()
+randomPop = do
+  n <- asks popSize
+  pop <- B.fromList <$> (replicateM n $ lift randomChromosome)
+  put pop
+
+-- calculate fitness of every individual 
+popFitness :: Stack (Vector Fitness)
+popFitness = do
+  pop <- get
+  c <- asks fitnessFunc
+  params <- B.mapM executeChromosome pop
+  return (B.map c params)
 
 -- selection is a critical part of GEP and together with replication
 -- sets the stage for evolution. replication is trivial (especially in
@@ -373,20 +386,87 @@ type PopT = StateT Population
 -- individuals with greater fitness have better odds of being
 -- replicated. The roulette wheel is spun N times to ensure the
 -- population size remains constant.
- 
-{-popFitness :: Config -> Pop Fitness-}
-{-popFitness c = do-}
-  {-pop <- get-}
-  {-params <- B.mapM executeChromosome pop-}
-  {-models <- B.mapM mkModel params-}
-  {-B.mapM fitness models-}
 
+roulette :: Vector Fitness -> Stack Chromosome
+roulette fs = do
+  pop <- get
+  n <- getRandomR (0.0, B.sum fs)
+  let acc (a, _) (f, c) = (a + f, c)
+  let first = (0.0, B.unsafeHead pop)
+  let csum = B.scanl acc first $ B.zip (B.convert fs) pop
+  let rest = B.dropWhile (\(s, _) -> s <= n) csum
+  return (snd . B.unsafeHead $ rest)
 
-{-selection :: PopT Rand Population-}
-{-selection = -}
+getBest :: Stack Chromosome
+getBest = do
+  f <- popFitness
+  pop <- get
+  let pf = B.zip pop f
+  let best = B.maximumBy (\(_,f1) (_,f2) -> compare f1 f2) pf
+  return (fst best)
+  
 
--- fitness :: CReadT Pop (UVector Double)
--- evolve :: Population -> CReadT PopT Rand ()
+selection :: Stack ()
+selection = do
+  f <- popFitness
+  b <- getBest
+  n <- asks popSize
+  newpop <- B.replicateM n (roulette f) -- spin roulette n times
+  put (B.cons b newpop) -- elitism
+
+type Rate = Double
+
+mutateSymbol :: Rate -> Alphabet -> Char -> Stack Char
+mutateSymbol r a c = do
+  n <- getRandom
+  if n < r
+    then randomSymbol a
+    else return c
+
+mutateGene :: Gene -> Stack Gene
+mutateGene (Gene bs rncs) = do
+  hs <- asks headLength
+  tl <- asks tailLength
+  mr <- asks mutationRate
+  ha <- asks headAlphabet
+  ta <- asks tailAlphabet
+  da <- asks dcAlphabet
+  let (h, rest) = BS.splitAt hs bs
+  let (t, d) = BS.splitAt tl rest
+  let mut = mutateSymbol mr
+  nh <- mapM (mut ha) (BSC.unpack h)
+  nt <- mapM (mut ta) (BSC.unpack t)
+  nd <- mapM (mut da) (BSC.unpack d)
+  return (Gene (BSC.pack $ concat [nh, nt, nd]) rncs)
+
+mutateChromosome :: Chromosome -> Stack Chromosome
+mutateChromosome c = do
+  genes <- splitChromosome c
+  mutants <- B.mapM mutateGene genes
+  return (Chrome . mconcat $ B.toList mutants)
+
+mutation :: Stack ()
+mutation = do
+  pop <- get
+  newpop <- B.mapM mutateChromosome pop
+  put newpop
+
+evolve :: Stack ()
+evolve = do
+  selection -- decide which chromosomes make it
+  mutation  -- mutation can be done better
+
+gep :: Int -> Stack (Vector Double)
+gep n = do
+  randomPop
+  replicateM_ n evolve
+  popFitness
+
 
 main :: IO ()
-main = putStrLn "Done!"
+main = do
+  gen <- newStdGen
+  let res = run (gep 1000) lineConf gen
+  putStr $ show res
+  
+
