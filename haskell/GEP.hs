@@ -86,7 +86,7 @@ instance Monoid Gene where
   mappend (Gene b1 v1) (Gene b2 v2) = 
     Gene (BS.append b1 b2) (v1 U.++ v2)
 
-newtype Chromosome = Chrome { fromGene :: Gene } deriving Show
+newtype Chromosome = Chrome { toGene :: Gene } deriving Show
 
 -- While efficient to represent chromosomes by two single structures
 -- (a bytestring and a vector) especially for operations like
@@ -110,33 +110,19 @@ data Config = Config { headLength  :: Int
                      , numberGenes :: Int
                      } deriving Show
 
-tailLength c   = (headLength c) + 1
+tailLength c   = headLength c + 1
 dcLength       = tailLength
-geneLength c   = (headLength c) + 2 * (tailLength c)
+geneLength c   = headLength c + 2 * tailLength c
 nRandoms       = BS.length . dcAlphabet
 headAlphabet c = BS.append (terminals c) (operators c)
 tailAlphabet   = terminals
 
--- example config
-conf = Config 4 "+-" "?" "01234" (-100.0,100.0) 2
 
 -- Obviously the GEP algorithm relies on the ability to produce random
 -- numbers. To handle this in haskell we must pass around a random
 -- generator but we can hide this in a state monad. 
 
 type Ran = Rand StdGen
-
--- Throughout the GEP-Algorithm a record of the current population
--- must be kept at all times (we can used a boxed vector). Also the
--- next population is constructed from the last. This is an example of
--- a stateful computation where a state monad is useful. However we
--- will often want use the stateful population monad alongside other
--- monads like the Random monad. So we should also define a monad
--- transformer.
-
-type Population = Vector Chromosome
-type Pop = State Population
-type PopT = StateT Population
 
 -- passing the config as the first parameter to every function is
 -- annoying. This can be fixed by using the reader monad. The reader
@@ -151,7 +137,7 @@ type CReadT = ReaderT Config
 -- from a given alphabet,
 randomSymbol :: Alphabet -> Ran Word8
 randomSymbol s = do
-  i <- getRandomR (0, (BS.length s) - 1)
+  i <- getRandomR (0, BS.length s - 1)
   return (BSU.unsafeIndex s i)
 
 -- to generate a random gene we need to use the config (handled by
@@ -162,33 +148,33 @@ randomSymbol s = do
 randomGene :: CReadT Ran Gene
 randomGene = do
   -- head domain
-  hl <- asks (headLength)
-  ha <- asks (headAlphabet)
-  head <- lift $ pack <$> replicateM hl (randomSymbol ha)
+  hl <- asks headLength
+  ha <- asks headAlphabet
+  h <- lift $ pack <$> replicateM hl (randomSymbol ha)
 
   -- tail domain
-  tl <- asks (tailLength)
-  ta <- asks (tailAlphabet)
-  tail <- lift $ pack <$> replicateM tl (randomSymbol ta)
+  tl <- asks tailLength
+  ta <- asks tailAlphabet
+  t <- lift $ pack <$> replicateM tl (randomSymbol ta)
 
   -- Dc domain
-  dcl <- asks (dcLength)
-  dca <- asks (dcAlphabet)
+  dcl <- asks dcLength
+  dca <- asks dcAlphabet
   dc <- lift $ pack <$> replicateM dcl (randomSymbol dca)
 
   -- RNC's
-  nr <- asks (nRandoms)
-  rr <- asks (rangeRNC)
+  nr <- asks nRandoms
+  rr <- asks rangeRNC
   rncs <- lift $ U.fromList <$> replicateM nr (getRandomR rr)
 
-  return $ Gene (BS.concat [head, tail, dc]) rncs
+  return $ Gene (BS.concat [h, t, dc]) rncs
 
 -- generate random chromosome from config. Because genes are are
 -- monoids to make a random chromosome we can just make multiple genes
 -- and then concat them.
 randomChromosome :: CReadT Ran Chromosome
 randomChromosome = do
-    ng <- asks (numberGenes)
+    ng <- asks numberGenes
     gs <- replicateM ng randomGene
     return $ Chrome $ mconcat gs
 
@@ -214,6 +200,7 @@ randomChromosome = do
 -- something working and is by no means a good solution. 
 
 
+-- this could be polymorphic to allow solutions that are not floats
 data Instruction = UnaryOp (Double -> Double) |
                    BinaryOp (Double -> Double -> Double) |
                    Value Double
@@ -232,8 +219,7 @@ instructs = M.fromList
 
 type PartialGene = (ByteString, ByteString, UVector Double)
   
-
-randomOp :: State PartialGene Node
+randomOp :: State PartialGene Node 
 randomOp = do
   (ss, rs, rncs) <- get
   let i = digitToInt $ BSC.head rs
@@ -248,12 +234,12 @@ getOp c = return (instructs M.! c)
 step :: Node -> State PartialGene (Node, [Node])
 step node = do
     (ss, rs, rncs) <- get
-    let (args, rem) = case node of
+    let (args, rest) = case node of
                         (BinaryOp _) -> BS.splitAt 2 ss
                         (UnaryOp _) -> BS.splitAt 1 ss
                         _ -> (BS.empty, ss)
-    put (rem, rs, rncs)
-    children <- sequence $ map getOp (BSC.unpack args)
+    put (rest, rs, rncs)
+    children <- mapM getOp (BSC.unpack args)
     return (node, children)
 
 treeify :: State PartialGene (Tree Node)
@@ -268,27 +254,116 @@ treeify = do
 
 splitGene :: Gene -> CRead PartialGene
 splitGene (Gene bs rncs) = do
-  hl <- asks (headLength)
-  tl <- asks (tailLength)
+  hl <- asks headLength
+  tl <- asks tailLength
   let (ss, rs) = BS.splitAt (hl + tl) bs
   return (ss, rs, rncs)
 
-execute :: Gene -> CRead Double
-execute g = do
-  pg <- splitGene g
-  return (evalTree $ evalState treeify pg)
+
+
+partByteString :: ByteString -> Int -> [ByteString]
+partByteString bs l
+  | l > BS.length bs = []
+  | otherwise = let (s, rest) = BS.splitAt l bs 
+                in s:partByteString rest l
+
+partUVector :: UVector Double -> Int -> [UVector Double]
+partUVector v l
+  | l > U.length v = []
+  | otherwise = let (s, rest) = U.splitAt l v
+                in s:partUVector rest l
+
+splitChromosome :: Chromosome -> CRead (Vector Gene)
+splitChromosome (Chrome (Gene ss rncs)) = do
+    gl <- asks geneLength
+    rs <- asks nRandoms
+    let vs = partUVector rncs rs
+    let bs = partByteString ss gl
+    return (B.fromList $ zipWith Gene bs vs)
 
 evalTree :: Tree Node -> Double
 evalTree (Node (Value v) _) = v
 evalTree (Node (UnaryOp u) [t]) = u (evalTree t)
 evalTree (Node (BinaryOp b) (lt:rt:[])) = b (evalTree lt) (evalTree rt)
+evalTree _ = error "something went wrong"
 
+executeGene :: Gene -> CRead Double
+executeGene g = do
+  pg <- splitGene g
+  return (evalTree $ evalState treeify pg)
+
+-- for optimization problems their is no need to link the genes with
+-- operators. Each gene represents a parameter of the solution
+type Params = UVector Double
+
+executeChromosome :: Chromosome -> CRead Params
+executeChromosome c = do
+  genes <- splitChromosome c
+  B.convert <$> B.mapM executeGene genes
+  
 -- the fitness of individuals drives evolution. for now lets assume
 -- fitness is a number between 0 and 1000. 0 represents an unviable
--- solution while 1000 represents a perfect solution.
+-- solution while 1000 represents a perfect solution. The fitenss
+-- function is obviously problem specific so we can't provide
+-- definition here but we can define a class
+
+type Fitness = Double
+
+class GeneticModel a where
+
+  -- construct a model
+  mkModel :: Params -> a
+
+  -- takes UVector of parameters and returns the fitneass
+  fitness :: a -> Fitness
+
+-- for testing, an example model is a straight line with 2 parameters,
+-- the enviroment is data coordinates. we can provide a fitness
+-- function related to the mean squared error and GEP-PO will perform
+-- linear regression.
+
+xvals = (U.fromList [1.0, 2.0, 3.0])
+yvals = (U.fromList [1.0, 2.0, 3.0])
+-- the answer is obviously y = x (m = 1.0, c = 0.0)
+
+-- need two genes
+lineConf :: Config
+lineConf = Config 10 "+-*" "?" "01234" (-100.0,100.0) 2
+
+newtype Line = Line { toDoubs :: (Double, Double) }
+
+instance GeneticModel Line where
+
+  mkModel ps = Line (m,c)
+    where 
+      m = U.unsafeHead ps
+      c = U.unsafeIndex ps 1
+
+  fitness (Line (m, c)) = 1000.0 / (1 + mse)
+    where 
+      ys = U.map (\x -> m*x + c) xvals
+      mse = U.sum . U.map (^2) $ U.zipWith (-) ys yvals
+
+-- GEP is now set and ready to do linear regression
 
 
--- fitness :: Chromosome -> Double
+-- so far we have dealt with: gene and chromosome representation,
+-- configuration, creation random genes/chromosomes, gene/chromosome
+-- execution and fitness calculation. What is left is the real nuts
+-- and bolts of GEP the creation of new generations with selection and
+-- modification operators. 
+--
+-- Throughout the GEP-Algorithm a record of the current population
+-- must be kept at all times (we can used a boxed vector). Also the
+-- next population is constructed from the last. This is an example of
+-- a stateful computation where a state monad is useful. However we
+-- will often want use the stateful population monad alongside other
+-- monads like the Random monad. So we should also define a monad
+-- transformer.
+
+type Population = Vector Chromosome
+type Pop = State Population
+type PopT = StateT Population
 
 -- selection is a critical part of GEP and together with replication
 -- sets the stage for evolution. replication is trivial (especially in
@@ -298,6 +373,13 @@ evalTree (Node (BinaryOp b) (lt:rt:[])) = b (evalTree lt) (evalTree rt)
 -- individuals with greater fitness have better odds of being
 -- replicated. The roulette wheel is spun N times to ensure the
 -- population size remains constant.
+ 
+{-popFitness :: Config -> Pop Fitness-}
+{-popFitness c = do-}
+  {-pop <- get-}
+  {-params <- B.mapM executeChromosome pop-}
+  {-models <- B.mapM mkModel params-}
+  {-B.mapM fitness models-}
 
 
 {-selection :: PopT Rand Population-}
@@ -306,5 +388,5 @@ evalTree (Node (BinaryOp b) (lt:rt:[])) = b (evalTree lt) (evalTree rt)
 -- fitness :: CReadT Pop (UVector Double)
 -- evolve :: Population -> CReadT PopT Rand ()
 
-main = do
-  putStrLn "Done!"
+main :: IO ()
+main = putStrLn "Done!"
