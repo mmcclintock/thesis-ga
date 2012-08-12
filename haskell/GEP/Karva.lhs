@@ -1,3 +1,40 @@
+Karva Module
+============
+
+Literate haskell
+----------------
+
+karva.lhs is a literate haskell program. This means that the file is
+both the documentation and the actual source code. GHC will ignore
+everything but the haskell code. While everything else is written in
+markdown where pandoc is use to transform the file into various
+formats such as HTML/pdf. 
+
+Karva Notation
+--------------
+
+in GEP-RNC each gene represents a valid program. often these
+programs evaluate to floating point numbers used, for example as
+parameters of a model to be optimized. The fitness also relies on
+the programs output. 
+
+Now i had a lot of trouble trying to find a solution that parses
+the gene bytestream to a tree structure and then evaluates the tree
+using a recursive definition. My first attempt was to use
+parsec/attoparsec but thanks to the people at stackoverflow.com who
+set me in ther right direction. See here
+http://stackoverflow.com/questions/11869206/parsing-karva-notation-in-haskell
+
+The heart of the problem is tree unfolding BREADTH-FIRST!!!
+thankfully the Data.Tree exports a function for doing this.  we
+will handle the parsing with attoparsec. for now we will hardcode
+the operators "+-*/", the function "?" and the Dc-alphabet as
+"0123456789" into the parsing code. Note this is a hack just to get
+something working and is by no means a good solution. 
+
+this could be polymorphic to allow solutions that are not floats
+
+\begin{code}
 {-# LANGUAGE OverloadedStrings #-}
 
 module GEP.Karva
@@ -15,40 +52,16 @@ import qualified Data.Vector.Unboxed as U
 import qualified Data.Map as M 
 import Data.Map ( Map )
 import Data.Tree
-
 import Data.Char ( digitToInt )
 
 import Control.Monad.State
 import Control.Monad.Reader
-
 import Control.Applicative ( (<$>) )
 
 import GEP.Types
 import GEP.Config
 import GEP.Monads
 
-import System.Log.Logger 
-
--- in GEP-RNC each gene represents a valid program. often these
--- programs evaluate to floating point numbers used, for example as
--- parameters of a model to be optimized. The fitness also relies on
--- the programs output. 
---
--- Now i had a lot of trouble trying to find a solution that parses
--- the gene bytestream to a tree structure and then evaluates the tree
--- using a recursive definition. My first attempt was to use
--- parsec/attoparsec but thanks to the people at stackoverflow.com who
--- set me in ther right direction. See here
--- http://stackoverflow.com/questions/11869206/parsing-karva-notation-in-haskell
---
--- The heart of the problem is tree unfolding BREADTH-FIRST!!!
--- thankfully the Data.Tree exports a function for doing this.  we
--- will handle the parsing with attoparsec. for now we will hardcode
--- the operators "+-*/", the function "?" and the Dc-alphabet as
--- "0123456789" into the parsing code. Note this is a hack just to get
--- something working and is by no means a good solution. 
-
--- this could be polymorphic to allow solutions that are not floats
 data Instruction = UnaryOp (Double -> Double) |
                    BinaryOp (Double -> Double -> Double) |
                    Value Double
@@ -150,6 +163,5 @@ executeChromosome c = do
   B.convert <$> B.mapM executeGene genes
  
 main :: IO ()
-main = do
-  updateGlobalLogger "GEP.Karva" (setLevel NOTICE)
-  noticeM "GEP.Karva" "[GEP.Karva] Done!"
+main = putStr "[GEP.Karva] Done!"
+\end{code}

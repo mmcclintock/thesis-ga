@@ -1,4 +1,6 @@
 *.hi
 *.o
+*.pdf
+*.html
 ga
 res*
