@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module GEP.Config
 ( Config (..)
 , tailLength
@@ -7,7 +9,6 @@ module GEP.Config
 , headAlphabet
 , tailAlphabet
 ) where
-
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
@@ -48,6 +49,10 @@ tailAlphabet :: Config -> Alphabet
 tailAlphabet = terminals
 
 main :: IO ()
-main = do
-  updateGlobalLogger "GEP.Config" (setLevel NOTICE)
-  noticeM "GEP.Config" "[GEP.Config] Done!"
+main = putStr "[GEP.Config] Done!"
+
+
+
+
+
+
