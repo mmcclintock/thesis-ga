@@ -1,5 +1,10 @@
 module GEP.Monads
 ( Stack
+, get
+, put
+, asks
+, getRandom
+, getRandomR
 ) where
 
 
@@ -12,14 +17,14 @@ import GEP.Config
 
 import System.Log.Logger
 
-{-type Ran = Rand StdGen-}
-type RanT = RandT StdGen
+type Ran = Rand StdGen
+{-type RanT = RandT StdGen-}
 {-type CRead = Reader Config-}
 type CReadT = ReaderT Config
 type Population = Vector Chromosome
 {-type Pop = State Population-}
 type PopT = StateT Population
-type Stack = PopT (CReadT (RanT IO))
+type Stack = PopT (CReadT Ran)
 
 main :: IO ()
 main = do

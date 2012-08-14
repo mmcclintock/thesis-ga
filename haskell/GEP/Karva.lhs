@@ -1,4 +1,4 @@
-Karva Module
+GEP.Karva Module
 ============
 
 Literate haskell
@@ -13,20 +13,19 @@ formats such as HTML/pdf.
 Karva Notation
 --------------
 
-in GEP-RNC each gene represents a valid program. often these
-programs evaluate to floating point numbers used, for example as
-parameters of a model to be optimized. The fitness also relies on
-the programs output. 
+In GEP each gene represents a valid program. For the case of parameter
+optimization (GEP-PO) problems each gene represents a real valued
+parameter. In order to evaluate the fitness of each individual it is
+necessary to execute (evaluate) each gene. This amounts to
+constructing the parse tree and then evaluating it.
 
-Now i had a lot of trouble trying to find a solution that parses
-the gene bytestream to a tree structure and then evaluates the tree
-using a recursive definition. My first attempt was to use
-parsec/attoparsec but thanks to the people at stackoverflow.com who
-set me in ther right direction. See here
-http://stackoverflow.com/questions/11869206/parsing-karva-notation-in-haskell
+I had a lot of trouble trying to find a solution to build the parse
+trees. The reason is that the list is built breadth-first. In haskell
+it is natural to use recursion to unfold the tree depth-first. It
+turns out the solution resides in the Data.Tree module based of a
+paper on breadth-first tree unfolding.
 
-The heart of the problem is tree unfolding BREADTH-FIRST!!!
-thankfully the Data.Tree exports a function for doing this.  we
+
 will handle the parsing with attoparsec. for now we will hardcode
 the operators "+-*/", the function "?" and the Dc-alphabet as
 "0123456789" into the parsing code. Note this is a hack just to get

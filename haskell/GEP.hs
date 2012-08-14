@@ -67,6 +67,8 @@ selection = do
 
 type Rate = Double
 
+
+-- aparently mapAccumL is good for this type of thing
 mutateSymbol :: Rate -> Alphabet -> Char -> Stack Char
 mutateSymbol r a c = do
   n <- getRandom

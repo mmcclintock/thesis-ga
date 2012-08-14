@@ -22,7 +22,7 @@ import qualified Data.ByteString.Char8 as BSC
 import qualified Data.Vector as B
 import qualified Data.Vector.Unboxed as U
 
-import System.Log.Logger
+import Test.QuickCheck
 
 randomSymbol :: MonadRandom m => Alphabet -> m Char
 randomSymbol s = do
@@ -58,7 +58,7 @@ randomChromosome = do
   ng <- asks numberGenes
   gs <- replicateM ng randomGene
   return $ Chrome $ mconcat gs
- 
+
 -- generate a random population
 randomPop :: Stack ()
 randomPop = do
@@ -67,6 +67,4 @@ randomPop = do
   put pop
 
 main :: IO ()
-main = do
-  updateGlobalLogger "GEP.Random" (setLevel NOTICE)
-  noticeM "GEP.Random" "[GEP.Random] Done!"
+main = putStr "[GEP.Random] Done!"
