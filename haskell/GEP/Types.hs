@@ -2,43 +2,85 @@ module GEP.Types
 ( UVector
 , Vector
 , Gene (..)
-, Chromosome (..)
-, Symbols
+, Chromosome
 , Alphabet
 , Fitness
 , Params
+, Operator (..)
+, OpMap
+, Terminal (..)
+, TermMap (..)
+, DCMap (..)
+, Range (..)
 ) where
 
-import qualified Data.ByteString as BS
+import Control.Applicative ( (<$>) )
 import qualified Data.ByteString.Char8 as BSC
-import Data.ByteString (ByteString)
-
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector as B
+import qualified Data.Map as M
+import Test.QuickCheck
 
-import Data.Monoid
-
-import System.Log.Logger
-
+-- Convenience synonyms
 type UVector = U.Vector
 type Vector = B.Vector
 
+
+type Alphabet = BSC.ByteString
 type NCs = UVector Double
-type Symbols = ByteString
+
+type Head = Alphabet
+type Tail = Alphabet
+type DC   = Alphabet
+type RNCs = NCs
+
+data Gene = Gene Head Tail DC RNCs deriving Show
+
+type Chromosome = Vector Gene
+
 type Params = UVector Double -- the parameters the genes encode
 type Fitness = Double -- fitness is a number from 0 to 1000
-type Alphabet = Symbols
 
-data Gene = Gene Symbols NCs deriving Show
+-- could be polymorphic
+data Operator = UnaryOp (Double -> Double) |
+                BinaryOp (Double -> Double -> Double)
+                
+instance Show Operator where
+  show (UnaryOp _) = "(Double -> Double)"
+  show (BinaryOp _) = "(Double -> Double -> Double)"
 
-instance Monoid Gene where
-  mempty = Gene BSC.empty U.empty
-  mappend (Gene b1 v1) (Gene b2 v2) = 
-    Gene (BS.append b1 b2) (v1 U.++ v2)
+type OpMap = M.Map Char Operator
 
-newtype Chromosome = Chrome { toGene :: Gene } deriving Show
+data Terminal = Value Double | RNC deriving Show
+
+newtype TermMap = TermMap { unTermMap :: M.Map Char Terminal} deriving Show
+
+newtype DCMap = DCMap { unDCMap :: M.Map Char Int} deriving Show
+
+newtype Range = Range { unPair :: (Double, Double) } deriving Show
+
+instance Arbitrary Range where
+  arbitrary = do
+    a <- arbitrary
+    b <- arbitrary
+    return $ if a <= b then Range (a,b) else Range (b,a)
+
+instance Arbitrary Terminal where
+  arbitrary = Value <$> arbitrary
+  
+instance Arbitrary DCMap where
+  arbitrary = do
+    a <- listOf $ elements symbols
+    return (DCMap . M.fromList $ zip a [0..])
+
+symbols :: String
+symbols = ['a'..'z'] ++ ['A'..'Z'] ++ "1234567890"
+
+instance Arbitrary TermMap where
+  arbitrary = do
+    a <- listOf1 . elements $ symbols 
+    b <- vectorOf (length a) arbitrary
+    return (TermMap . M.fromList $ zip a b)
 
 main :: IO ()
-main = do
-  updateGlobalLogger "GEP.Types" (setLevel NOTICE)
-  noticeM "GEP.Types" "[GEP.Types] Done!"
+main = putStr "[GEP.Types] Done!"
