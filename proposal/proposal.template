@@ -139,7 +139,7 @@ $endfor$
 \begin{titlepage}
 \begin{center}
 \textsc{\LARGE METR4900 Thesis Proposal}\\[1cm]
-{\huge Ore Deposit Modelling}\\[2cm]
+{\LARGE Geological Modelling with Evolutionary Algorithms}\\[2cm]
 \begin{minipage}[t]{0.6\columnwidth} \large
 \begin{description}
 \itemsep2mm
