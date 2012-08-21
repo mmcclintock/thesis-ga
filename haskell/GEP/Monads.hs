@@ -5,6 +5,8 @@ module GEP.Monads
 , asks
 , getRandom
 , getRandomR
+, runStack
+, Ran
 ) where
 
 
@@ -15,18 +17,14 @@ import Control.Monad.Random
 import GEP.Types
 import GEP.Config
 
-import System.Log.Logger
-
 type Ran = Rand StdGen
-{-type RanT = RandT StdGen-}
-{-type CRead = Reader Config-}
 type CReadT = ReaderT Config
 type Population = Vector Chromosome
-{-type Pop = State Population-}
 type PopT = StateT Population
 type Stack = PopT (CReadT Ran)
 
+runStack :: Stack a -> Population -> Config -> StdGen -> a
+runStack s p c = evalRand (runReaderT (evalStateT s p) c)
+
 main :: IO ()
-main = do
-  updateGlobalLogger "GEP.Monads" (setLevel NOTICE)
-  noticeM "GEP.Monads" "[GEP.Monads] Done!"
+main = putStrLn "[GEP.Monads] Done!"

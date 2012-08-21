@@ -1,0 +1,13 @@
+guard :shell do
+  watch /proposal(\.template|\.markdown)$/ do |m|
+    cmd = "pandoc -s --template=proposal.template --latex-engine=lualatex --bibliography=refs.bib --csl=ieee --toc proposal.markdown -o proposal.pdf"
+    if system(cmd)
+      `xdotool search --class mupdf key --window %@ r`
+      "Done!\n"
+    else
+      "Fail!\n"
+    end
+  end
+end
+
+# vim:ft=ruby

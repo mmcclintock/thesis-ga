@@ -1,7 +1,10 @@
-module GEP.Pretty (
-configDoc
+module GEP.Pretty
+( configDoc
+, geneDoc
 ) where
 
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.Vector.Unboxed as U
 
 import qualified Data.Map as M
 import Text.PrettyPrint.ANSI.Leijen
@@ -23,11 +26,11 @@ dcDomainDoc c = if rncs > 0
   where 
     rncs = M.size .unDCMap $ dcAlphabet c
     alphabet = text . M.keys . unDCMap $ dcAlphabet c
-    (l,h) = unPair $ rangeRNC c
+    (l,h) = unRange $ rangeRNC c
 
 
-geneDoc :: Config -> Doc
-geneDoc c = nest 2 (
+geneLayoutDoc :: Config -> Doc
+geneLayoutDoc c = nest 2 (
     bold (text "Gene Layout:" <+> lengths) <$$>
     dcDomainDoc c <$$>
     text "Operators:" <+> list (map char ops) <$$>
@@ -57,7 +60,7 @@ configDoc c = nest 2 (
     by (text "GEP CONFIGURATION:" <+> n) <$$>
     bold (text "No. Chromosomes:" <+> int noc) <$$>
     bold (text "Genes per Chromosome:" <+> int gpc) <$$>
-    geneDoc c <$$>
+    geneLayoutDoc c <$$>
     modDoc c
     ) <> line <> line
   where
@@ -65,6 +68,16 @@ configDoc c = nest 2 (
     noc = noChromosomes c
     gpc = genesPerChromosome c
     by = bold . yellow
+
+
+geneDoc :: Gene -> Doc
+geneDoc (Gene h t dc rncs) = 
+  green (text (BSC.unpack h)) <>
+  red (text (BSC.unpack t)) <>
+  blue (text (BSC.unpack dc)) <$>
+  if U.null rncs
+    then line
+    else yellow (hsep (map double . U.toList $ rncs)) <$> line
 
 main :: IO ()
 main = putStr "[GEP.Pretty] Done!"

@@ -6,6 +6,10 @@ module GEP.Config
 , dcLength
 , geneLength
 , nRandoms
+, headChars
+, tailChars
+, dcChars
+, rncLength
 ) where
 
 import qualified Data.Map as M 
@@ -59,17 +63,34 @@ tailLength :: Config  -> Int
 tailLength c = headLength c * (maxArity (operators c) - 1) + 1
 
 dcLength :: Config -> Int
-dcLength = tailLength
+dcLength c = if noDc c then 0 else tailLength c
 
 geneLength :: Config -> Int
-geneLength c = headLength c + 2 * tailLength c
+geneLength c = headLength c + tailLength c + dcLength c
+
+rncLength :: Config -> Int
+rncLength = length . dcChars
 
 nRandoms :: Config -> Int
 nRandoms = M.size . unDCMap . dcAlphabet
 
-prop_rnc c = nodc == noRNC
+headChars :: Config -> String
+headChars c = ops ++ terms
   where
-    nodc = M.null . unDCMap . dcAlphabet $ c
+    ops = M.keys . operators $ c
+    terms = M.keys . unTermMap . terminals $ c
+
+tailChars :: Config -> String
+tailChars = M.keys . unTermMap . terminals
+
+dcChars :: Config -> String
+dcChars = M.keys . unDCMap . dcAlphabet
+
+noDc :: Config -> Bool
+noDc = M.null . unDCMap . dcAlphabet
+
+prop_rnc c = noDc c == noRNC
+  where
     noRNC = not . M.member '?' . unTermMap . terminals $ c
 
 main :: IO ()

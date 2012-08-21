@@ -1,9 +1,10 @@
 module GEP.Types
 ( UVector
 , Vector
+, Alphabet
+, NCs
 , Gene (..)
 , Chromosome
-, Alphabet
 , Fitness
 , Params
 , Operator (..)
@@ -24,7 +25,6 @@ import Test.QuickCheck
 -- Convenience synonyms
 type UVector = U.Vector
 type Vector = B.Vector
-
 
 type Alphabet = BSC.ByteString
 type NCs = UVector Double
@@ -57,7 +57,7 @@ newtype TermMap = TermMap { unTermMap :: M.Map Char Terminal} deriving Show
 
 newtype DCMap = DCMap { unDCMap :: M.Map Char Int} deriving Show
 
-newtype Range = Range { unPair :: (Double, Double) } deriving Show
+newtype Range = Range { unRange :: (Double, Double) } deriving Show
 
 instance Arbitrary Range where
   arbitrary = do
