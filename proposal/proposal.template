@@ -160,6 +160,7 @@ $if(toc)$
 {
 \hypersetup{linkcolor=black}
 \tableofcontents
+\thispagestyle{empty}
 \pagebreak
 }
 $endif$
