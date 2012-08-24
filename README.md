@@ -1,12 +1,7 @@
-Repo for undergraduate thesis on - genetic algorithms
+Repository for undergraduate thesis on geological modelling with
+evolutionary algorithms. 
 
-Goals
------
-Use evolutionary algorithms (similar to genetic algorithms) to model ore
-deposits from magnetic/gravitational field readings.
+If your interested read the project proposal which is in the download
+section.
 
-Use parallel methods to improve performance
 
-To do
------
-* write proposal
