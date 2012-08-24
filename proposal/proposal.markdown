@@ -7,9 +7,9 @@ relation to the production of geological models. The main focus is on
 EAs, their implementation in the context of geological modelling and
 how effective they are at producing solutions. The goal is not to
 introduce a complete system for producing industrial quality
-geological models from real data (many such systems already exist) but
-rather to implement a system that allows the study of the
-applicability of EAs in this area. 
+geological models from real data (many such systems already exist
+[@voxi;@gocad]) but rather to implement a system that allows the study
+of the applicability of EAs in this area. 
 
 ## Project Outline
 
@@ -70,15 +70,17 @@ The expected outcomes of this project are
 
 Mapping geological features under the earth's surface is an important
 task not only for academic reasons but also for commercial and
-economical reasons. For example reservoir engineers in the mining, oil
-and gas industries use geological models as a staring point to create
-simulations that guide the development of the reservoir and the
-eventual extraction of material. Methods for producing high quality
-geological models are therefore sought after and actively researched.
+economical reasons. Geological maps are often used as a starting point
+for derivative models [@why]. For example reservoir engineers in the
+mining, oil and gas industries often use geological models to create
+more complex simulations that guide the development of reservoirs and
+the eventual extraction of material. Geological models can also be
+used for environmental reasons such as the location and protection of
+water resources [@why].
 
 The geological models can be constructed from various geophysical
 sources such as gravitational and magnetic field measurements,
-Down-hole drill samples and seismic surveys [@Dmod]. Often the field
+down-hole drill samples and seismic surveys [@Dmod]. Often the field
 measurements are collected using airborne surveying techniques.
 Methods such as EAs can produce a large number of solutions but for
 each model they produce there needs to be some mechanism for
@@ -99,8 +101,8 @@ quoted in [@Dmod]).
 > make accurate calculations meaningless even though the geophysical
 > data may be of any desired precision.
 
-To reduce the number of solutions that describe the fields correctly
-other constraints such as Down-hole drill samples can be used. The
+To reduce the number of solutions that describe the fields correctly,
+other constraints such as down-hole drill samples can be used. The
 initial problem described in the project outline involves optimizing
 an ellipsoid. This type of problem can be classified under discrete
 object modelling [@Dmod]. The advantage of using these simple models
@@ -154,11 +156,11 @@ more natural representation of a solution then say a binary string or
 a list of floating point numbers.
 
 Whilst defining a phenotype is important the EAs themselves (mainly
-the genetic operators) operate on a problem independent representation
-called the *genotype*. For example the genotype may be a binary string
-even though the phenotype is a tree-like structure. In some problems
-the phenotype/genotype representations might be very different and for
-some they might be identical.
+the genetic operators) operate using a problem independent
+representation called the *genotype*. For example the genotype may be
+a binary string even though the phenotype is a tree-like structure. In
+some problems the phenotype/genotype representations might be very
+different and for some they might be identical.
 
 For the EA to work there needs to be at most one phenotype
 representation for each genotype [@ec]. The process of converting from
@@ -177,7 +179,7 @@ explanations are left out.
 * The ability to produce random individuals
 * A method for selecting parents. Some possibilities are
     + Fitness proportional selection also known as roulette wheel
-    + selection.
+      selection.
     + Ranking selection
     + Tournament selection
 * A set of genetic operators. While these depend on the type of EA
@@ -194,7 +196,7 @@ explanations are left out.
     + elitism
 
 Once the EA is implemented there is still a number of parameters such
-as population size, mutation/recombination rates etc. that must be
+as population size, mutation/recombination rates etc.  that must be
 chosen before each run.
 
 ### Types of EAs
@@ -217,7 +219,7 @@ genotype represents some arbitrary program. If the parse trees are
 allowed to grow they can evolve to become arbitrarily complex thus
 making GP better suited to modelling problems and machine learning.
 However this can also be a disadvantage because if a limit is not
-placed on the size of the trees the time-space requirements grow and
+placed on the size of the trees, the time-space requirements grow and
 the program can exhibit bad performance characteristics.
 
 Whilst genetic algorithms and genetic programming are arguably the
@@ -286,6 +288,8 @@ computational and for this reason is low-risk. If access to any
 computer labs is required the risk assessment and guidelines
 established by the appropriate UQ safety officer for those labs will
 be reviewed and followed.
+
+\pagebreak
 
 # References
 <!-- pandoc handles the refs -->

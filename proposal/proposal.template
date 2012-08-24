@@ -36,6 +36,7 @@ $endif$
 \fi
 \usepackage{setspace}
 \onehalfspacing
+\usepackage{url}
 \usepackage[margin=20mm]{geometry}
 $if(biblio-files)$
 \bibliography{$biblio-files$}
