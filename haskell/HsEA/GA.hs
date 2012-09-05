@@ -1,43 +1,34 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
--- {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
 
 module HsEA.GA
-( GAGenotype (..)
+( Genome (..)
 , GAConfig (..)
-, randomIndividual
 , randomPopulation
 , calculateFitness
 , chooseParents
-, GAStack (..)
-, runGAStack
-, newStdGen
+, GAStack
 , asks
 , recombination
 , mutationReal
 , elitism
 , getBest
 , Fitness
+, runReaderT
+, withSystemRandom
 ) where 
 
 import BasicPrelude
 
-import Control.Monad.Random
+import System.Random.MWC
 import Control.Monad.Reader
--- import Control.Monad.State
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector as V
 
 type Fitness = Double
 
-class (Unbox e, Random e) => GAGenotype g e | g -> e where
-  toVec :: g -> UVector e
-  fromVec :: UVector e -> g
-  fitness :: g -> Fitness
+class (Unbox e, Variate e) => Genome e where
+  fitness :: UVector e -> Fitness
   
 data GAConfig = GAConfig 
   { popSize :: Int
@@ -45,91 +36,84 @@ data GAConfig = GAConfig
   , vecSize :: Int
   , mutationRate :: Double
   , recombinationRate :: Double
-  } deriving Show
+  , randomGenerator :: GenIO
+  }
 
-newtype GAStack a = GAStack { 
-  runStack :: ReaderT GAConfig (Rand StdGen) a
-  } deriving (Functor, Monad, MonadReader GAConfig, MonadRandom)
+type GAStack = ReaderT GAConfig IO
 
-runGAStack :: GAStack a -> GAConfig -> StdGen -> a
-runGAStack stack conf = evalRand (runReaderT (runStack stack) conf)
-
-randomIndividual :: GAGenotype g e => GAStack g
-randomIndividual = do
-  vs <- asks vecSize
-  GAStack $ fromVec . U.fromList . take vs <$> getRandoms
-
-randomPopulation :: GAGenotype g e => GAStack (Vector g)
+randomPopulation :: Genome e => GAStack (Vector (UVector e))
 randomPopulation = do
+  size <- asks vecSize
+  gen <- asks randomGenerator
   ps <- asks popSize
-  V.replicateM ps randomIndividual
+  V.replicateM ps . U.replicateM size $ liftIO (uniform gen)
 
+calculateFitness :: Genome e => Vector (UVector e) -> GAStack (UVector Fitness)
+calculateFitness vg = return . U.convert . V.map fitness $ vg
 
-calculateFitness :: GAGenotype g e => Vector g -> GAStack (Vector Fitness)
-calculateFitness vg = return (V.map fitness vg)
+spinRoulette :: Genome e => GenIO -> UVector Fitness -> Vector (UVector e) -> GAStack (UVector e)
+spinRoulette gen fs vs = do
+  let csum = U.scanl1' (+) fs
+  r <- liftIO $ uniformR (0, U.last csum) gen
+  let i = U.length $ U.takeWhile (< r) csum
+  return $ V.unsafeIndex vs i
 
-spinRoulette :: GAGenotype g e => Vector (Fitness, g) -> GAStack g
-spinRoulette fv = do
-    let cumsum = V.scanl1' (\(acc, _) (f, g) -> (acc+f, g)) fv
-    r <- getRandomR (0, fst . V.last $ cumsum)
-    let leftovers = V.dropWhile (\(acc, _) -> acc < r) cumsum
-    return (snd . V.head $ leftovers)
+chooseParents :: Genome e => UVector Fitness -> Vector (UVector e) -> GAStack (Vector (UVector e))
+chooseParents fit pop = do
+  gen <- asks randomGenerator
+  V.replicateM (V.length pop) (spinRoulette gen fit pop)
 
-chooseParents :: GAGenotype g e => Vector Fitness -> Vector g -> GAStack (Vector g)
-chooseParents fit pop = V.replicateM (V.length pop) (spinRoulette $ V.zip fit pop)
-
-combine :: GAGenotype g e => (g, g) -> GAStack (g, g)
-combine (p1, p2) = do
-  rr <- asks recombinationRate
-  r <- getRandom
+combine :: Genome e => Double -> GenIO -> Int -> (UVector e, UVector e) -> GAStack (UVector e, UVector e)
+combine rr gen vs (p1, p2) = do
+  r <- liftIO $ uniform gen
   if r < rr 
     then do
-      vs <- asks vecSize
-      cp <- getRandomR (0, vs)
-      let (h1, t1) = U.splitAt cp $ toVec p1
-      let (h2, t2) = U.splitAt cp $ toVec p2
-      return (fromVec $ h1 U.++ t2, fromVec $ h2 U.++ t1)
+      cp <- liftIO $ uniformR (0, vs) gen
+      let (h1, t1) = U.splitAt cp p1
+      let (h2, t2) = U.splitAt cp p2
+      return (h1 U.++ t2, h2 U.++ t1)
     else
       return (p1, p2)
 
-recombination :: GAGenotype g e => Vector g -> GAStack (Vector g)
+recombination :: Genome e => Vector (UVector e) -> GAStack (Vector (UVector e))
 recombination par = do
+  rr <- asks recombinationRate
+  gen <- asks randomGenerator
+  vs <- asks vecSize
+
   let (mothers, fathers) = V.splitAt (V.length par `div` 2) par
-  offspring <- V.mapM combine $ V.zip mothers fathers
+  offspring <- V.mapM (combine rr gen vs) $ V.zip mothers fathers
   let (f, b) = V.unzip offspring
   if odd $ V.length par
     then return $ V.last par `V.cons` f V.++ b
     else return $ f V.++ b
 
-mutateReal' :: Double -> GAStack Double
-mutateReal' n = do
+mutateReal :: Int -> Double -> GenIO -> UVector Double -> GAStack (UVector Double)
+mutateReal size mr gen vals = do
+    bools <- U.replicateM size $ fmap (< mr) (liftIO (uniform gen))
+    creep <- U.replicateM size $ liftIO $ uniform gen
+    return . U.map mut $ U.zip3 bools creep vals
+  where
+    mut (True, creep, val) = val + creep
+    mut (False, _   , val) = val
+
+mutationReal :: Vector (UVector Double) -> GAStack (Vector (UVector Double))
+mutationReal pop = do
+  size <- asks vecSize
+  gen <- asks randomGenerator
   mr <- asks mutationRate
-  r <- getRandom
-  if r < mr
-    then do
-      cm <- getRandomR (-10.0, 10.0)
-      return (n + cm)
-    else return n
+  V.mapM (mutateReal size mr gen) pop
 
-mutateReal :: (GAGenotype g Double) => g -> GAStack g
-mutateReal g = fromVec <$> (U.mapM mutateReal' . toVec $ g)
-
-mutationReal :: GAGenotype g Double => Vector g -> GAStack (Vector g)
-mutationReal = V.mapM mutateReal
-
-getBest :: GAGenotype g e => Vector g -> GAStack (g, Fitness)
+getBest :: Genome e => Vector (UVector e) -> GAStack (UVector e, Fitness)
 getBest pop = return . V.maximumBy cmp $ V.zip pop fit
   where 
     fit = V.map fitness pop
     cmp (_,f1) (_,f2) = compare f1 f2
 
-elitism :: GAGenotype g e => Vector Fitness -> Vector g -> Vector g -> GAStack (Vector g)
+elitism :: Genome e => UVector Fitness -> Vector (UVector e) -> Vector (UVector e) -> GAStack (Vector (UVector e))
 elitism fit pop off
   | (V.maximum . V.map fitness $ off) > bestParFit = return off
   | otherwise = return . V.cons bestPar . V.tail $ off
   where
     cmp (f1,_) (f2,_) = compare f1 f2
-    (bestParFit, bestPar) = V.maximumBy cmp $ V.zip fit pop
- 
-main :: IO ()
-main = putStrLn "Done!"
+    (bestParFit, bestPar) = V.maximumBy cmp $ V.zip (V.convert fit) pop
