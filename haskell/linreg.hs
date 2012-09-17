@@ -1,43 +1,46 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 
 import BasicPrelude
 import qualified Data.Vector.Unboxed as U
 import HsEA.GA
 
--- the environment
-xvals :: UVector Double
+-- the environment for linear regression is a set of x,y points,
 xvals = U.fromList [-1, 0, 3, 5]
-
-yvals :: UVector Double
 yvals = U.fromList [-0.5, 0, 1.5, 2.5]
+-- these are all points on the line y=0.5x so the perfect solution is m=0.5, y=0.0
 
-
+-- here is where we define the fitness function given a vector of doubles
 instance Genome Double where
-
-  fitness v = 1000 / (1 + sse)
+  fitness v = 1000 / (1 + sse)  -- fitness goes between 0 and 1000
     where 
-      m = v U.! 0
-      c = v U.! 1
-      sse = U.sum . U.map (^2) . U.zipWith (-) yvals . U.map (\x -> m*x + c) $ xvals
+      m = v U.! 0  -- first parameter is the gradient
+      c = v U.! 1  -- second parameter is the intercept
+      sse = U.sum . U.map (^2) . U.zipWith (-) yvals . U.map (\x -> m*x + c) $ xvals  -- sum of squared error
 
-
-ga :: GAStack (UVector Double, Fitness)
+-- this basically says: with an initial random population repeat
+-- "evolve" n times and get the best individual of the final population
 ga = do
   n <- asks numberGens
-  initPop <- randomPopulation
-  finalPop <- foldl (>>=) (return initPop) (replicate n evolve)
+  finalPop <- foldl' (>>=) randomPopulation (replicate n evolve)
   getBest finalPop
 
-evolve :: Vector (UVector Double) -> GAStack (Vector (UVector Double))
+-- this is the definition of evoltuion: calculate the fitness ->
+-- choose the parents -> perform recombination -> perform mutation ->
+-- ensure the best individual survives (elitism)
 evolve pop = do
   fit <- calculateFitness pop
   off <- chooseParents fit pop >>= recombination >>= mutationReal
   elitism fit pop off
  
-main :: IO ()
-main = do
+-- parameters for the GA.
+conf rg = GAConfig { popSize = 100
+                   , numberGens = 10000
+                   , vecSize = 2
+                   , mutationRate = 0.01
+                   , recombinationRate = 0.5
+                   , randomGenerator = rg
+                   }
 
-  let conf = GAConfig 100 10000 2 0.1 0.6
-  withSystemRandom (runReaderT ga . conf) >>= print
+-- run the GA.
+main = withSystemRandom (runReaderT ga . conf) >>= print

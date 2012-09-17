@@ -4,7 +4,6 @@
 
 import BasicPrelude
 import qualified Data.Vector.Unboxed as U
-import qualified Data.Vector as V
 import HsEA.GA
 
 
@@ -32,84 +31,40 @@ gravity (Ore xo zo r p) (x, z) = (k*(xo - x), k*(zo - z))
 -- lets generate readings that a sphere located at x=500 z=-1000 r=250
 -- would create
 
-solution :: Ore
 solution = Ore 500 (-1000) 250 2500
 
-locations :: Vector (X, Z)
-locations = V.zip (V.enumFromN 0 100) (V.replicate 100 250)
+locations :: UVector (X, Z)
+locations = U.zip (U.enumFromN 0 100) (U.replicate 100 250)
 
-readings :: Vector (X, Z)
-readings = V.map (gravity solution) locations
+readings = U.map (gravity solution) locations
 
 
 -- next lets specify the genotype
-
-newtype Genotype = Genotype { unGenotype :: UVector Double } deriving Show
-
-instance GAGenotype Genotype Double where
-
-  toVec = unGenotype
-  fromVec = Genotype
-
-  fitness g
+instance Genome Double where
+  fitness v
       | r < 0 = 0
-      | otherwise = 1000 / (1 + 5e11*sse)
+      | otherwise = 1000 / (1 + 1e10*sse)
     where
-      v = toVec g
       r = v U.! 2
       x = v U.! 0
       z = v U.! 1
       ore = Ore x z r 2500
-      field = V.map (gravity ore) locations
+      field = U.map (gravity ore) locations
       error2 ((rx, ry), (fx, fy)) = (rx - fx)^2 + (ry - fy)^2
-      sse = V.sum . V.map error2 $ V.zip readings field
+      sse = U.sum . U.map error2 $ U.zip readings field
 
--- set the GA parameters
-conf :: GAConfig
-conf = GAConfig { popSize = 120
-                , numberGens = 3000
-                , vecSize = 3
-                , mutationRate = 0.2
-                , recombinationRate = 0.3
-                }
-
-
-ga :: GAStack (Genotype, Fitness)
 ga = do
   n <- asks numberGens
   initPop <- randomPopulation
   finalPop <- foldl (>>=) (return initPop) (replicate n evolve)
   getBest finalPop
 
-evolve :: Vector Genotype -> GAStack (Vector Genotype)
 evolve pop = do
   fit <- calculateFitness pop
   off <- chooseParents fit pop >>= recombination >>= mutationReal
   elitism fit pop off
  
-main :: IO ()
-main = do
-  putStrLn "Starting GA!"
+-- set the GA parameters
+conf = GAConfig 100 10000 3 0.1 0.3
 
-  gen <- newStdGen
-  putStrLn $ "Generated random seed: " ++ show gen
-
-  print (runGAStack ga conf gen)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+main = withSystemRandom (runReaderT ga . conf) >>= print

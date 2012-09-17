@@ -56,7 +56,7 @@ spinRoulette gen fs vs = do
   let csum = U.scanl1' (+) fs
   r <- liftIO $ uniformR (0, U.last csum) gen
   let i = U.length $ U.takeWhile (< r) csum
-  return $ V.unsafeIndex vs i
+  return $! V.unsafeIndex vs i
 
 chooseParents :: Genome e => UVector Fitness -> Vector (UVector e) -> GAStack (Vector (UVector e))
 chooseParents fit pop = do
@@ -85,14 +85,14 @@ recombination par = do
   offspring <- V.mapM (combine rr gen vs) $ V.zip mothers fathers
   let (f, b) = V.unzip offspring
   if odd $ V.length par
-    then return $ V.last par `V.cons` f V.++ b
-    else return $ f V.++ b
+    then return $! V.last par `V.cons` f V.++ b
+    else return $! f V.++ b
 
 mutateReal :: Int -> Double -> GenIO -> UVector Double -> GAStack (UVector Double)
 mutateReal size mr gen vals = do
     bools <- U.replicateM size $ fmap (< mr) (liftIO (uniform gen))
-    creep <- U.replicateM size $ liftIO $ uniform gen
-    return . U.map mut $ U.zip3 bools creep vals
+    creep <- U.replicateM size $ liftIO $ uniformR (-50.0,50.0) gen
+    return $! U.map mut $ U.zip3 bools creep vals
   where
     mut (True, creep, val) = val + creep
     mut (False, _   , val) = val
